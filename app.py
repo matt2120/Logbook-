@@ -1,199 +1,233 @@
-###############################################################################
-#
-# App - A class for writing the Excel XLSX App file.
-#
-# SPDX-License-Identifier: BSD-2-Clause
-#
-# Copyright (c) 2013-2025, John McNamara, jmcnamara@cpan.org
-#
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
 
-# Package imports.
-from . import xmlwriter
+st.set_page_config(layout="wide")
 
+st.markdown("""
+    <style>
+    .stMultiSelect > div {
+        max-width: 100% !important;
+    }
+    div[data-baseweb="tag"] {
+        max-width: 100% !important;
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        word-break: break-word !important;
+        font-size: 14px !important;
+        padding: 6px 10px !important;
+    }
+    div[data-baseweb="select"] > div {
+        min-height: 55px !important;
+    }
+    .stMultiSelect label {
+        white-space: normal !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-class App(xmlwriter.XMLwriter):
-    """
-    A class for writing the Excel XLSX App file.
+st.title("Logbook unità")
 
+uploaded_file = st.file_uploader("Carica il file Excel dei cambi:", type="xlsx")
 
-    """
+if uploaded_file:
+    xls = pd.ExcelFile(uploaded_file)
+    df_cambi = xls.parse("Matrice Cambio")
+    df_cambi.columns = df_cambi.columns.str.strip()
 
-    ###########################################################################
-    #
-    # Public API.
-    #
-    ###########################################################################
+    df_unita = None
+    for sheet in xls.sheet_names:
+        temp_df = xls.parse(sheet)
+        temp_df.columns = temp_df.columns.str.strip()
+        if 'Nome Identificativo' in temp_df.columns:
+            df_unita = temp_df
+            break
 
-    def __init__(self):
-        """
-        Constructor.
+    if df_unita is None:
+        st.error("Errore: Nessun foglio contiene la colonna 'Nome Identificativo'.")
+    else:
+        giorni_settimana = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
 
-        """
+        base_lunedi = datetime(2025, 4, 7)
+        today = datetime.today()
+        giorni_differenza = (today - base_lunedi).days
+        numero_settimana = giorni_differenza // 7
+        lunedi_corrente = base_lunedi + timedelta(weeks=numero_settimana)
+        lunedi_successivo = lunedi_corrente + timedelta(weeks=1)
 
-        super().__init__()
+        settimana_1 = [lunedi_corrente + timedelta(days=i) for i in range(5)]
+        settimana_2 = [lunedi_successivo + timedelta(days=i) for i in range(5)]
 
-        self.part_names = []
-        self.heading_pairs = []
-        self.properties = {}
-        self.doc_security = 0
+        calendario = {}
 
-    def _add_part_name(self, part_name):
-        # Add the name of a workbook Part such as 'Sheet1' or 'Print_Titles'.
-        self.part_names.append(part_name)
+        def sort_key(cambio):
+            for tier in ["S1", "S2", "S3", "S5"]:
+                if cambio.startswith(tier):
+                    return ["S1", "S2", "S3", "S5"].index(tier)
+            return 999
 
-    def _add_heading_pair(self, heading_pair):
-        # Add the name of a workbook Heading Pair such as 'Worksheets',
-        # 'Charts' or 'Named Ranges'.
+        def settimana_layout(settimana, label):
+            st.markdown(f"### 📆 {label}")
+            cols = st.columns(5)
+            sorted_cambi = sorted(df_cambi["Cambio"].unique(), key=sort_key)
+            for i, giorno in enumerate(settimana):
+                nome_giorno = giorno.strftime("%A").capitalize()
+                giorno_label = f"{label} - {nome_giorno}"
+                with cols[i]:
+                    cambi_giorno = st.multiselect(
+                        f"{nome_giorno} ({giorno.strftime('%d/%m')})",
+                        options=sorted_cambi,
+                        key=f"cambi_{giorno_label}",
+                        label_visibility="visible"
+                    )
+                    calendario[giorno] = cambi_giorno
 
-        # Ignore empty pairs such as chartsheets.
-        if not heading_pair[1]:
-            return
+        st.subheader("🗓️ Calendario Settimanale Interno")
+        settimana_layout(settimana_1, "Settimana 1")
+        settimana_layout(settimana_2, "Settimana 2")
 
-        self.heading_pairs.append(("lpstr", heading_pair[0]))
-        self.heading_pairs.append(("i4", heading_pair[1]))
+        if st.button("Genera Logbook"):
+            schedule_preparazione = []
+            schedule_pulizia = []
+            messaggi_speciali = []
 
-    def _set_properties(self, properties):
-        # Set the document properties.
-        self.properties = properties
+            def clean(s):
+                if pd.isna(s):
+                    return None
+                return str(s).replace(")", ") ").strip().upper()
 
-    ###########################################################################
-    #
-    # Private API.
-    #
-    ###########################################################################
+            for data_montaggio, cambi in calendario.items():
+                for cambio in cambi:
+                    righe_cambio = df_cambi[df_cambi['Cambio'] == cambio]
+                    for _, riga in righe_cambio.iterrows():
+                        unita_montare = riga.get('Testata da montare')
+                        unita_smontare = riga.get('Testata da smontare')
 
-    def _assemble_xml_file(self):
-        # Assemble and write the XML file.
+                        if str(unita_montare).strip() == '/' and str(unita_smontare).strip() == '/':
+                            messaggi_speciali.append(f"Per il cambio {cambio} non sono previsti cambi unità")
+                            continue
 
-        # Write the XML declaration.
-        self._xml_declaration()
+                        if pd.notna(unita_montare):
+                            if "FB-GE o FB-PI se montate" in str(unita_montare):
+                                schedule_preparazione.append({
+                                    "Linea": "",
+                                    "Unità": "FB-GE o FB-PI se montate",
+                                    "Data Preparazione": (data_montaggio - timedelta(days=1)).strftime("%d %B"),
+                                    "Tempo Preparazione": ""
+                                })
+                            else:
+                                filtro_mont = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(unita_montare))]
+                                if not filtro_mont.empty:
+                                    dett_mont = filtro_mont.iloc[0]
+                                    tempo_val = dett_mont.get('Tempo di prep')
+                                    tempo_prep = f"{int(tempo_val)} min" if pd.notna(tempo_val) else "-"
+                                    schedule_preparazione.append({
+                                        "Linea": dett_mont['Linea'],
+                                        "Unità": unita_montare,
+                                        "Data Preparazione": (data_montaggio - timedelta(days=1)).strftime("%d %B"),
+                                        "Tempo Preparazione": tempo_prep
+                                    })
+                                else:
+                                    st.warning(f"Unità non trovata (montaggio): {unita_montare}")
 
-        self._write_properties()
-        self._write_application()
-        self._write_doc_security()
-        self._write_scale_crop()
-        self._write_heading_pairs()
-        self._write_titles_of_parts()
-        self._write_manager()
-        self._write_company()
-        self._write_links_up_to_date()
-        self._write_shared_doc()
-        self._write_hyperlink_base()
-        self._write_hyperlinks_changed()
-        self._write_app_version()
+                        if pd.notna(unita_smontare):
+                            filtro_smnt = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(unita_smontare))]
+                            if not filtro_smnt.empty:
+                                dett_smnt = filtro_smnt.iloc[0]
+                                tempo_val = dett_smnt.get('Tempo di pulizia')
+                                tempo_pulizia = f"{int(tempo_val)} min" if pd.notna(tempo_val) else "-"
+                                schedule_pulizia.append({
+                                    "Linea": dett_smnt['Linea'],
+                                    "Unità": unita_smontare,
+                                    "Data Pulizia": data_montaggio.strftime("%d %B"),
+                                    "Tempo Pulizia": tempo_pulizia
+                                })
+                            else:
+                                st.warning(f"Unità non trovata (smontaggio): {unita_smontare}")
 
-        self._xml_end_tag("Properties")
+            def color_row_by_linea(row):
+                colori = {
+                    "FGC1": "background-color: #ADD8E6",
+                    "FGC2": "background-color: #E6A57E",
+                    "FGC3": "background-color: #F3D1FF",
+                }
+                return [colori.get(row['Linea'], '')] * len(row)
 
-        # Close the file.
-        self._xml_close()
+            st.subheader("Preparazione Pre Montaggio")
+            df_prep = pd.DataFrame(schedule_preparazione)
+            df_prep.index += 1
+            st.dataframe(df_prep.style.apply(color_row_by_linea, axis=1))
 
-    ###########################################################################
-    #
-    # XML methods.
-    #
-    ###########################################################################
+            st.subheader("Pulizia Post Smontaggio")
+            df_pulizia = pd.DataFrame(schedule_pulizia)
+            df_pulizia.index += 1
+            st.dataframe(df_pulizia.style.apply(color_row_by_linea, axis=1))
 
-    def _write_properties(self):
-        # Write the <Properties> element.
-        schema = "http://schemas.openxmlformats.org/officeDocument/2006/"
-        xmlns = schema + "extended-properties"
-        xmlns_vt = schema + "docPropsVTypes"
+            st.subheader("⏱️ Riepilogo Tempi Totali per Giorno")
+            df_prep['Tempo (int)'] = df_prep['Tempo Preparazione'].str.extract(r'(\d+)').astype(float)
+            df_pulizia['Tempo (int)'] = df_pulizia['Tempo Pulizia'].str.extract(r'(\d+)').astype(float)
 
-        attributes = [
-            ("xmlns", xmlns),
-            ("xmlns:vt", xmlns_vt),
-        ]
+            giorni = sorted(set(df_prep['Data Preparazione']).union(df_pulizia['Data Pulizia']))
+            totali_prep, totali_puli, totali = [], [], []
+            max_val, min_val = 0, float('inf')
+            numeri_totali = []
 
-        self._xml_start_tag("Properties", attributes)
+            for giorno in giorni:
+                t_prep = df_prep[df_prep['Data Preparazione'] == giorno]['Tempo (int)'].sum()
+                t_puli = df_pulizia[df_pulizia['Data Pulizia'] == giorno]['Tempo (int)'].sum()
+                total = t_prep + t_puli
+                numeri_totali.append(total)
+                max_val = max(max_val, total)
+                min_val = min(min_val, total) if total > 0 else min_val
+                totali_prep.append(f"{int(t_prep)} min" if t_prep else "-")
+                totali_puli.append(f"{int(t_puli)} min" if t_puli else "-")
+                totali.append(total)
 
-    def _write_application(self):
-        # Write the <Application> element.
-        self._xml_data_element("Application", "Microsoft Excel")
+            df_riepilogo = pd.DataFrame({
+                'Giorno': ['Totale Preparazione', 'Totale Pulizia', 'Totale Giorno']
+            })
+            for i, giorno in enumerate(giorni):
+                df_riepilogo[giorno] = [totali_prep[i], totali_puli[i], f"{int(totali[i])} min" if totali[i] else "-"]
 
-    def _write_doc_security(self):
-        # Write the <DocSecurity> element.
-        self._xml_data_element("DocSecurity", self.doc_security)
+            df_riepilogo = df_riepilogo.set_index('Giorno')
 
-    def _write_scale_crop(self):
-        # Write the <ScaleCrop> element.
-        self._xml_data_element("ScaleCrop", "false")
+            def background_gradient(val):
+                if isinstance(val, str) and 'min' in val:
+                    num = int(val.replace(' min', ''))
+                    norm = (num - min_val) / (max_val - min_val) if max_val != min_val else 0.5
+                    if norm <= 0.2:
+                        return 'background-color: #c6e2b3'  # verde chiaro
+                    elif norm <= 0.4:
+                        return 'background-color: #fff8b0'  # giallo chiaro
+                    elif norm <= 0.6:
+                        return 'background-color: #ffe080'  # giallo medio
+                    elif norm <= 0.8:
+                        return 'background-color: #ffb347'  # arancio chiaro
+                    else:
+                        return 'background-color: #e57373'  # rosso tenue
+                return ''
 
-    def _write_heading_pairs(self):
-        # Write the <HeadingPairs> element.
-        self._xml_start_tag("HeadingPairs")
-        self._write_vt_vector("variant", self.heading_pairs)
-        self._xml_end_tag("HeadingPairs")
+            styled = df_riepilogo.style.applymap(background_gradient, subset=pd.IndexSlice[['Totale Giorno'], :])
+            styled.set_table_styles([{ 'selector': 'th.col_heading', 'props': [('font-weight', 'bold')] }])
+            st.dataframe(styled)
 
-    def _write_titles_of_parts(self):
-        # Write the <TitlesOfParts> element.
-        parts_data = []
+            if messaggi_speciali:
+                st.subheader("ℹ️ Note sui cambi senza unità")
+                for msg in messaggi_speciali:
+                    st.info(msg)
 
-        self._xml_start_tag("TitlesOfParts")
+            with st.expander("📥 Esporta Logbook in Excel"):
+                import io
+                from pandas import ExcelWriter
+                buffer = io.BytesIO()
+                with ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df_prep.drop(columns='Tempo (int)', errors='ignore').to_excel(writer, sheet_name='Preparazione', index=False)
+                    df_pulizia.drop(columns='Tempo (int)', errors='ignore').to_excel(writer, sheet_name='Pulizia', index=False)
+                    df_riepilogo.to_excel(writer, sheet_name='Riepilogo')
+                st.download_button(
+                    label="Scarica Logbook",
+                    data=buffer,
+                    file_name="logbook_settimanale.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-        for part_name in self.part_names:
-            parts_data.append(("lpstr", part_name))
-
-        self._write_vt_vector("lpstr", parts_data)
-
-        self._xml_end_tag("TitlesOfParts")
-
-    def _write_vt_vector(self, base_type, vector_data):
-        # Write the <vt:vector> element.
-        attributes = [
-            ("size", len(vector_data)),
-            ("baseType", base_type),
-        ]
-
-        self._xml_start_tag("vt:vector", attributes)
-
-        for vt_data in vector_data:
-            if base_type == "variant":
-                self._xml_start_tag("vt:variant")
-
-            self._write_vt_data(vt_data)
-
-            if base_type == "variant":
-                self._xml_end_tag("vt:variant")
-
-        self._xml_end_tag("vt:vector")
-
-    def _write_vt_data(self, vt_data):
-        # Write the <vt:*> elements such as <vt:lpstr> and <vt:if>.
-        self._xml_data_element(f"vt:{vt_data[0]}", vt_data[1])
-
-    def _write_company(self):
-        company = self.properties.get("company", "")
-
-        self._xml_data_element("Company", company)
-
-    def _write_manager(self):
-        # Write the <Manager> element.
-        if "manager" not in self.properties:
-            return
-
-        self._xml_data_element("Manager", self.properties["manager"])
-
-    def _write_links_up_to_date(self):
-        # Write the <LinksUpToDate> element.
-        self._xml_data_element("LinksUpToDate", "false")
-
-    def _write_shared_doc(self):
-        # Write the <SharedDoc> element.
-        self._xml_data_element("SharedDoc", "false")
-
-    def _write_hyperlink_base(self):
-        # Write the <HyperlinkBase> element.
-        hyperlink_base = self.properties.get("hyperlink_base")
-
-        if hyperlink_base is None:
-            return
-
-        self._xml_data_element("HyperlinkBase", hyperlink_base)
-
-    def _write_hyperlinks_changed(self):
-        # Write the <HyperlinksChanged> element.
-        self._xml_data_element("HyperlinksChanged", "false")
-
-    def _write_app_version(self):
-        # Write the <AppVersion> element.
-        self._xml_data_element("AppVersion", "12.0000")
