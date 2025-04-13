@@ -1,39 +1,21 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import re
 
 st.set_page_config(layout="wide")
 
-st.markdown("""
-    <style>
-    .stMultiSelect > div {
-        max-width: 100% !important;
-    }
-    div[data-baseweb="tag"] {
-        max-width: 100% !important;
-        white-space: normal !important;
-        overflow-wrap: break-word !important;
-        word-break: break-word !important;
-        font-size: 14px !important;
-        padding: 6px 10px !important;
-    }
-    div[data-baseweb="select"] > div {
-        min-height: 55px !important;
-    }
-    .stMultiSelect label {
-        white-space: normal !important;
-    }
-    </style>
-""", unsafe_allow_html=True)
+oggi = datetime.today().strftime("%A %d %B %Y")
+st.title("📅 Logbook unità")
+st.caption(f"Oggi: {oggi}")
 
-st.title("Logbook unità")
-
-uploaded_file = st.file_uploader("Carica il file Excel dei cambi:", type="xlsx")
+uploaded_file = st.file_uploader("Carica il file Excel Backend:", type="xlsx")
 
 if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
     df_cambi = xls.parse("Matrice Cambio")
     df_cambi.columns = df_cambi.columns.str.strip()
+    df_cambi['Cambio'] = df_cambi['Cambio'].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
 
     df_unita = None
     for sheet in xls.sheet_names:
@@ -46,45 +28,49 @@ if uploaded_file:
     if df_unita is None:
         st.error("Errore: Nessun foglio contiene la colonna 'Nome Identificativo'.")
     else:
-        giorni_settimana = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+        linee = ["FGC1", "FGC2", "FGC3"]
+        tier_map = {
+            "FGC1": ["S1 Seta", "S1 Idea", "S1 Petalo", "S1 Natura", "S1 Seta Lady"],
+            "FGC2": ["S3 Seta", "S3 Idea", "S3 Petalo", "S3 Twiggy"],
+            "FGC3": ["S2 Seta", "S2 Idea", "S2 Petalo", "S5 Seta", "S5 Idea", "S5 Petalo"]
+        }
 
-        base_lunedi = datetime(2025, 4, 7)
         today = datetime.today()
-        giorni_differenza = (today - base_lunedi).days
-        numero_settimana = giorni_differenza // 7
-        lunedi_corrente = base_lunedi + timedelta(weeks=numero_settimana)
-        lunedi_successivo = lunedi_corrente + timedelta(weeks=1)
+        base_lunedi = today - timedelta(days=today.weekday())
+        settimana_1 = [base_lunedi + timedelta(days=i) for i in range(5)]
+        settimana_2 = [base_lunedi + timedelta(days=7+i) for i in range(5)]
+        tutte_le_date = settimana_1 + settimana_2
 
-        settimana_1 = [lunedi_corrente + timedelta(days=i) for i in range(5)]
-        settimana_2 = [lunedi_successivo + timedelta(days=i) for i in range(5)]
+        calendario = {linea: {} for linea in linee}
 
-        calendario = {}
+        st.subheader("📋 Seleziona i cambi per ogni linea")
+        for linea in linee:
+            with st.expander(f" {linea}"):
+                tier_possibili = tier_map[linea]
+                tier_iniziale = st.selectbox(f"Seleziona il Tier iniziale per {linea}", tier_possibili, key=f"tier_iniziale_{linea}")
+                tier_corrente = tier_iniziale
 
-        def sort_key(cambio):
-            for tier in ["S1", "S2", "S3", "S5"]:
-                if cambio.startswith(tier):
-                    return ["S1", "S2", "S3", "S5"].index(tier)
-            return 999
+                st.markdown("**Settimana 1**")
+                cols1 = st.columns(5)
+                for i, giorno in enumerate(settimana_1):
+                    giorno_str = giorno.strftime("%a %d/%m")
+                    with cols1[i]:
+                        opzioni = ["" ] + [t for t in tier_possibili if t != tier_corrente]
+                        tier_scelto = st.selectbox(f"{giorno_str}", options=opzioni, key=f"{linea}_settimana1_{giorno_str}")
+                        calendario[linea][giorno] = (tier_corrente, tier_scelto if tier_scelto else None)
+                        if tier_scelto:
+                            tier_corrente = tier_scelto
 
-        def settimana_layout(settimana, label):
-            st.markdown(f"### 📆 {label}")
-            cols = st.columns(5)
-            sorted_cambi = sorted(df_cambi["Cambio"].unique(), key=sort_key)
-            for i, giorno in enumerate(settimana):
-                nome_giorno = giorno.strftime("%A").capitalize()
-                giorno_label = f"{label} - {nome_giorno}"
-                with cols[i]:
-                    cambi_giorno = st.multiselect(
-                        f"{nome_giorno} ({giorno.strftime('%d/%m')})",
-                        options=sorted_cambi,
-                        key=f"cambi_{giorno_label}",
-                        label_visibility="visible"
-                    )
-                    calendario[giorno] = cambi_giorno
-
-        st.subheader("🗓️ Calendario Settimanale Interno")
-        settimana_layout(settimana_1, "Settimana 1")
-        settimana_layout(settimana_2, "Settimana 2")
+                st.markdown("**Settimana 2**")
+                cols2 = st.columns(5)
+                for i, giorno in enumerate(settimana_2):
+                    giorno_str = giorno.strftime("%a %d/%m")
+                    with cols2[i]:
+                        opzioni = ["" ] + [t for t in tier_possibili if t != tier_corrente]
+                        tier_scelto = st.selectbox(f"{giorno_str}", options=opzioni, key=f"{linea}_settimana2_{giorno_str}")
+                        calendario[linea][giorno] = (tier_corrente, tier_scelto if tier_scelto else None)
+                        if tier_scelto:
+                            tier_corrente = tier_scelto
 
         if st.button("Genera Logbook"):
             schedule_preparazione = []
@@ -96,40 +82,42 @@ if uploaded_file:
                     return None
                 return str(s).replace(")", ") ").strip().upper()
 
-            for data_montaggio, cambi in calendario.items():
-                for cambio in cambi:
-                    righe_cambio = df_cambi[df_cambi['Cambio'] == cambio]
-                    for _, riga in righe_cambio.iterrows():
+            for linea in linee:
+                for giorno, (tier_da, tier_a) in calendario[linea].items():
+                    if not tier_a:
+                        continue
+                    cambio_cercato = f"{tier_da} > {tier_a}"
+                    cambio_cercato = re.sub(r'\s+', ' ', cambio_cercato).strip()
+                    cambio_match = df_cambi[df_cambi['Cambio'] == cambio_cercato]
+                    if cambio_match.empty:
+                        st.warning(f"Cambio non trovato per {linea}: {tier_da} > {tier_a}")
+                        continue
+
+                    for _, riga in cambio_match.iterrows():
                         unita_montare = riga.get('Testata da montare')
                         unita_smontare = riga.get('Testata da smontare')
 
                         if str(unita_montare).strip() == '/' and str(unita_smontare).strip() == '/':
-                            messaggi_speciali.append(f"Per il cambio {cambio} non sono previsti cambi unità")
+                            messaggi_speciali.append(f"{linea} - {giorno.strftime('%d/%m')}: nessun cambio previsto per {tier_da} > {tier_a}")
                             continue
 
-                        if pd.notna(unita_montare):
-                            if "FB-GE o FB-PI se montate" in str(unita_montare):
-                                schedule_preparazione.append({
-                                    "Linea": "",
-                                    "Unità": "FB-GE o FB-PI se montate",
-                                    "Data Preparazione": (data_montaggio - timedelta(days=1)).strftime("%d %B"),
-                                    "Tempo Preparazione": ""
-                                })
-                            else:
-                                filtro_mont = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(unita_montare))]
-                                if not filtro_mont.empty:
-                                    dett_mont = filtro_mont.iloc[0]
-                                    tempo_val = dett_mont.get('Tempo di prep')
-                                    tempo_prep = f"{int(tempo_val)} min" if pd.notna(tempo_val) else "-"
-                                    schedule_preparazione.append({
-                                        "Linea": dett_mont['Linea'],
-                                        "Unità": unita_montare,
-                                        "Data Preparazione": (data_montaggio - timedelta(days=1)).strftime("%d %B"),
-                                        "Tempo Preparazione": tempo_prep
-                                    })
-                                else:
-                                    st.warning(f"Unità non trovata (montaggio): {unita_montare}")
+                        giorno_montaggio = giorno.strftime("%d %B")
+                        giorno_preparazione_data = giorno - timedelta(days=3) if giorno.weekday() == 0 else giorno - timedelta(days=1)
+                        giorno_preparazione = giorno_preparazione_data.strftime("%d %B")
 
+                        if pd.notna(unita_montare):
+                            filtro_mont = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(unita_montare))]
+                            if not filtro_mont.empty:
+                                dett_mont = filtro_mont.iloc[0]
+                                tempo_val = dett_mont.get('Tempo di prep')
+                                tempo_prep = f"{int(tempo_val)} min" if pd.notna(tempo_val) else "-"
+                                schedule_preparazione.append({
+                                    "Linea": linea,
+                                    "Unità": unita_montare,
+                                    "Data Preparazione": giorno_preparazione,
+                                    "Priorità Montaggio": giorno_montaggio,
+                                    "Tempo Preparazione": tempo_prep
+                                })
                         if pd.notna(unita_smontare):
                             filtro_smnt = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(unita_smontare))]
                             if not filtro_smnt.empty:
@@ -137,13 +125,30 @@ if uploaded_file:
                                 tempo_val = dett_smnt.get('Tempo di pulizia')
                                 tempo_pulizia = f"{int(tempo_val)} min" if pd.notna(tempo_val) else "-"
                                 schedule_pulizia.append({
-                                    "Linea": dett_smnt['Linea'],
+                                    "Linea": linea,
                                     "Unità": unita_smontare,
-                                    "Data Pulizia": data_montaggio.strftime("%d %B"),
+                                    "Data Pulizia": giorno.strftime("%d %B"),
+                                    "Priorità Rimontaggio": "",
                                     "Tempo Pulizia": tempo_pulizia
                                 })
-                            else:
-                                st.warning(f"Unità non trovata (smontaggio): {unita_smontare}")
+
+            df_prep = pd.DataFrame(schedule_preparazione)
+            df_pulizia = pd.DataFrame(schedule_pulizia)
+
+            df_pulizia['Tempo (int)'] = df_pulizia['Tempo Pulizia'].str.extract(r'(\d+)').astype(float)
+            df_prep['Tempo (int)'] = df_prep['Tempo Preparazione'].str.extract(r'(\d+)').astype(float)
+
+            unita_to_montaggi = df_prep.groupby('Unità')['Priorità Montaggio'].apply(list).to_dict()
+
+            for idx, row in df_pulizia.iterrows():
+                unita = row['Unità']
+                data_pulizia = datetime.strptime(row['Data Pulizia'], "%d %B")
+                date_montaggi = [datetime.strptime(d, "%d %B") for d in unita_to_montaggi.get(unita, []) if datetime.strptime(d, "%d %B") > data_pulizia]
+                if date_montaggi:
+                    prox = min(date_montaggi)
+                    df_pulizia.at[idx, 'Priorità Rimontaggio'] = prox.strftime("%d %B")
+                else:
+                    df_pulizia.at[idx, 'Priorità Rimontaggio'] = "next week"
 
             def color_row_by_linea(row):
                 colori = {
@@ -153,30 +158,23 @@ if uploaded_file:
                 }
                 return [colori.get(row['Linea'], '')] * len(row)
 
-            st.subheader("Preparazione Pre Montaggio")
-            df_prep = pd.DataFrame(schedule_preparazione)
+            st.subheader("Preparazione pre Montaggio")
             df_prep.index += 1
-            st.dataframe(df_prep.style.apply(color_row_by_linea, axis=1))
+            st.dataframe(df_prep.drop(columns='Tempo (int)').style.apply(color_row_by_linea, axis=1), use_container_width=True)
 
             st.subheader("Pulizia Post Smontaggio")
-            df_pulizia = pd.DataFrame(schedule_pulizia)
             df_pulizia.index += 1
-            st.dataframe(df_pulizia.style.apply(color_row_by_linea, axis=1))
+            st.dataframe(df_pulizia[['Linea', 'Unità', 'Data Pulizia', 'Priorità Rimontaggio', 'Tempo Pulizia']].style.apply(color_row_by_linea, axis=1), use_container_width=True)
 
             st.subheader("⏱️ Riepilogo Tempi Totali per Giorno")
-            df_prep['Tempo (int)'] = df_prep['Tempo Preparazione'].str.extract(r'(\d+)').astype(float)
-            df_pulizia['Tempo (int)'] = df_pulizia['Tempo Pulizia'].str.extract(r'(\d+)').astype(float)
-
             giorni = sorted(set(df_prep['Data Preparazione']).union(df_pulizia['Data Pulizia']))
             totali_prep, totali_puli, totali = [], [], []
             max_val, min_val = 0, float('inf')
-            numeri_totali = []
 
             for giorno in giorni:
                 t_prep = df_prep[df_prep['Data Preparazione'] == giorno]['Tempo (int)'].sum()
                 t_puli = df_pulizia[df_pulizia['Data Pulizia'] == giorno]['Tempo (int)'].sum()
                 total = t_prep + t_puli
-                numeri_totali.append(total)
                 max_val = max(max_val, total)
                 min_val = min(min_val, total) if total > 0 else min_val
                 totali_prep.append(f"{int(t_prep)} min" if t_prep else "-")
@@ -196,27 +194,27 @@ if uploaded_file:
                     num = int(val.replace(' min', ''))
                     norm = (num - min_val) / (max_val - min_val) if max_val != min_val else 0.5
                     if norm <= 0.2:
-                        return 'background-color: #c6e2b3'  # verde chiaro
+                        return 'background-color: #c6e2b3'
                     elif norm <= 0.4:
-                        return 'background-color: #fff8b0'  # giallo chiaro
+                        return 'background-color: #fff8b0'
                     elif norm <= 0.6:
-                        return 'background-color: #ffe080'  # giallo medio
+                        return 'background-color: #ffe080'
                     elif norm <= 0.8:
-                        return 'background-color: #ffb347'  # arancio chiaro
+                        return 'background-color: #ffb347'
                     else:
-                        return 'background-color: #e57373'  # rosso tenue
+                        return 'background-color: #e57373'
                 return ''
 
             styled = df_riepilogo.style.applymap(background_gradient, subset=pd.IndexSlice[['Totale Giorno'], :])
             styled.set_table_styles([{ 'selector': 'th.col_heading', 'props': [('font-weight', 'bold')] }])
-            st.dataframe(styled)
+            st.dataframe(styled, use_container_width=True)
 
             if messaggi_speciali:
                 st.subheader("ℹ️ Note sui cambi senza unità")
                 for msg in messaggi_speciali:
                     st.info(msg)
 
-            with st.expander("📥 Esporta Logbook in Excel"):
+            with st.expander("📅 Esporta Logbook in Excel"):
                 import io
                 from pandas import ExcelWriter
                 buffer = io.BytesIO()
