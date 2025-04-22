@@ -31,7 +31,7 @@ if uploaded_file:
         linee = ["FGC1", "FGC2", "FGC3"]
         tier_map = {
             "FGC1": ["S1 Seta", "S1 Idea", "S1 Petalo", "S1 Natura", "S1 Seta Lady"],
-            "FGC2": ["S3 Seta", "S3 Idea", "S3 Petalo", "S3 Twiggy"],
+            "FGC2": ["S3 Seta", "S3 Idea", "S3 Petalo", "S3 Twiggy", "S3 Natura"],
             "FGC3": ["S2 Seta", "S2 Idea", "S2 Petalo", "S5 Seta", "S5 Idea", "S5 Petalo"]
         }
 
