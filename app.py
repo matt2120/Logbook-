@@ -25,16 +25,15 @@ if uploaded_file:
             df_unita = temp_df
             break
 
+    df_tier = xls.parse("Tier")
+    df_tier.columns = df_tier.columns.str.strip()
+    tier_map = df_tier.groupby("Linea")['Tier'].apply(list).to_dict()
+
     if df_unita is None:
         st.error("Errore: Nessun foglio contiene la colonna 'Nome Identificativo'.")
     else:
-        linee = ["FGC1", "FGC2", "FGC3"]
-        tier_map = {
-            "FGC1": ["S1 Seta", "S1 Idea", "S1 Petalo", "S1 Natura", "S1 Seta Lady"],
-            "FGC2": ["S3 Seta", "S3 Idea", "S3 Petalo", "S3 Twiggy", "S3 Natura"],
-            "FGC3": ["S2 Seta", "S2 Idea", "S2 Petalo", "S5 Seta", "S5 Idea", "S5 Petalo"]
-        }
-
+        linee = list(tier_map.keys())
+      
         today = datetime.today()
         base_lunedi = today - timedelta(days=today.weekday())
         settimana_1 = [base_lunedi + timedelta(days=i) for i in range(5)]
@@ -214,18 +213,60 @@ if uploaded_file:
                 for msg in messaggi_speciali:
                     st.info(msg)
 
+
+
+
             with st.expander("📅 Esporta Logbook in Excel"):
                 import io
                 from pandas import ExcelWriter
+            
+                def estrai_info_unita(nome_unita):
+                    filtro = df_unita[df_unita['Nome Identificativo'].apply(lambda x: clean(x) == clean(nome_unita))]
+                    if filtro.empty:
+                        return {'Linea': '', 'Tipo': '', 'Size': '', 'Tier': '', 'Nome Identificativo': nome_unita}
+                    r = filtro.iloc[0]
+                    return {
+                        'Linea': r.get('Linea', ''),
+                        'Tipo': r.get('Tipo', ''),
+                        'Size': r.get('Size', ''),
+                        'Tier': r.get('Tier', ''),
+                        'Nome Identificativo': r.get('Nome Identificativo', nome_unita)
+                    }
+            
+                def arricchisci(df, tipo):
+                    records = []
+                    for _, row in df.iterrows():
+                        info = estrai_info_unita(row['Unità'])
+                        records.append({
+                            'Tipo operazione': tipo,
+                            'Linea': info['Linea'],
+                            'Tipo': info['Tipo'],
+                            'Size': info['Size'],
+                            'Tier': info['Tier'],
+                            'Nome Identificativo': info['Nome Identificativo'],
+                            'Tempo di Prep o Pulizia': row.get('Tempo Preparazione') if tipo == 'PREPARAZIONE' else row.get('Tempo Pulizia'),
+                            'Data Preparazione o Pulizia': row.get('Data Preparazione') if tipo == 'PREPARAZIONE' else row.get('Data Pulizia'),
+                            'Priorità Montaggio o Rimontaggio': row.get('Priorità Montaggio') if tipo == 'PREPARAZIONE' else row.get('Priorità Rimontaggio'),
+                            'Attività eseguita': '',
+                            'Data esecuzione': '',
+                            'Firma': '',
+                            'Note': ''
+                        })
+                    return pd.DataFrame(records)
+            
+                df_prep_final = arricchisci(df_prep, 'PREPARAZIONE')
+                df_pulizia_final = arricchisci(df_pulizia, 'PULIZIA')
+            
+                df_final = pd.concat([df_prep_final, df_pulizia_final], ignore_index=True)
+            
                 buffer = io.BytesIO()
                 with ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    df_prep.drop(columns='Tempo (int)', errors='ignore').to_excel(writer, sheet_name='Preparazione', index=False)
-                    df_pulizia.drop(columns='Tempo (int)', errors='ignore').to_excel(writer, sheet_name='Pulizia', index=False)
-                    df_riepilogo.to_excel(writer, sheet_name='Riepilogo')
+                    df_final.to_excel(writer, sheet_name='Logbook', index=False)
+            
                 st.download_button(
                     label="Scarica Logbook",
                     data=buffer,
                     file_name="logbook_settimanale.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
+            
