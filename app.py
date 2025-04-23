@@ -256,17 +256,21 @@ if uploaded_file:
             
                 df_prep_final = arricchisci(df_prep, 'PREPARAZIONE')
                 df_pulizia_final = arricchisci(df_pulizia, 'PULIZIA')
-            
                 df_final = pd.concat([df_prep_final, df_pulizia_final], ignore_index=True)
+            
+                # Riepilogo in formato tabellare
+                df_riepilogo_excel = df_riepilogo.reset_index()
             
                 buffer = io.BytesIO()
                 with ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_final.to_excel(writer, sheet_name='Logbook', index=False)
+                    df_riepilogo_excel.to_excel(writer, sheet_name='Riepilogo', index=False)
             
                 st.download_button(
                     label="Scarica Logbook",
-                    data=buffer,
+                    data=buffer.getvalue(),
                     file_name="logbook_settimanale.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             
+
